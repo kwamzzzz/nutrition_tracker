@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nutrition & Muscle Goal Calculator</title>
+  <!-- Tailwind (Play CDN) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <meta name="description" content="Calculate your calories and macros to lose fat, maintain weight, or gain muscle. Explains BMR, TDEE, and macro targets." />
+</head>
+<body class="min-h-screen bg-gradient-to-br from-indigo-50 to-white text-gray-900">
+  <div id="app" class="max-w-3xl mx-auto p-4 md:p-8"></div>
+
+  <!-- React + ReactDOM + Babel (for JSX without a build step) -->
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    // Helpers for URL params (so you can share a link with prefilled inputs)
+    function getParams() {
+      const params = new URLSearchParams(window.location.search);
+      const out = {};
+      for (const [k, v] of params.entries()) out[k] = v;
+      return out;
+    }
+    function setParams(obj) {
+      const params = new URLSearchParams(obj);
+      const newUrl = window.location.pathname + "?" + params.toString();
+      window.history.replaceState(null, "", newUrl);
+    }
+
+    function numberOrEmpty(x) {
+      const n = Number(x);
+      return Number.isFinite(n) ? String(n) : "";
+    }
+
+    function round0(x) {
+      return Math.round(Number(x));
+    }
+
+    function asCSV(rows) {
+      return rows.map(r => r.map(v => String(v).replaceAll('"', '""')).map(v => `"${v}"`).join(",")).join("\\n");
+    }
+
+    function NutritionCalculator() {
+      const params = getParams();
+      const [inputs, setInputs] = useState({
+        gender: params.gender || "male",
+        age: numberOrEmpty(params.age),
+        height: numberOrEmpty(params.height),
+        weight: numberOrEmpty(params.weight),
+        activity: params.activity || "1.2",
+        goal: params.goal || "maintain",
+      });
+      const [result, setResult] = useState(null);
+
+      const calculate = () => {
+        const age = parseFloat(inputs.age);
+        const height = parseFloat(inputs.height);
+        const weight = parseFloat(inputs.weight);
+        if (!Number.isFinite(age) || !Number.isFinite(height) || !Number.isFinite(weight)) {
+          setResult(null);
+          return;
+        }
+
+        // Mifflin-St Jeor
+        const bmr = inputs.gender === "male"
+          ? 10 * weight + 6.25 * height - 5 * age + 5
+          : 10 * weight + 6.25 * height - 5 * age - 161;
+
+        const tdee = bmr * parseFloat(inputs.activity);
+
+        let calories = tdee;
+        if (inputs.goal === "lose") calories = tdee * 0.8;   // ~20% deficit
+        if (inputs.goal === "gain") calories = tdee * 1.15;  // ~15% surplus
+
+        const proteinPerKg = inputs.goal === "gain" ? 2.0 : 1.6;
+        const protein = proteinPerKg * weight; // g
+        const fat = 0.8 * weight;              // g (moderate baseline)
+        const proteinCals = protein * 4;
+        const fatCals = fat * 9;
+        const carbsCals = Math.max(0, calories - proteinCals - fatCals);
+        const carbs = carbsCals / 4;
+
+        const r = {
+          bmr: round0(bmr),
+          tdee: round0(tdee),
+          calories: round0(calories),
+          protein: round0(protein),
+          fat: round0(fat),
+          carbs: round0(carbs),
+        };
+        setResult(r);
+
+        // keep URL shareable
+        setParams({ ...inputs, ...Object.fromEntries(Object.entries(inputs)), });
+      };
+
+      useEffect(() => {
+        // Auto-calc on load if inputs came from URL
+        if (inputs.age && inputs.height && inputs.weight) {
+          calculate();
+        }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, []);
+
+      const copySummary = async () => {
+        if (!result) return;
+        const lines = [
+          "Nutrition & Muscle Goal Calculator — Results",
+          `Gender: ${inputs.gender}`,
+          `Age: ${inputs.age} yrs`,
+          `Height: ${inputs.height} cm`,
+          `Weight: ${inputs.weight} kg`,
+          `Activity: ${inputs.activity}`,
+          `Goal: ${inputs.goal}`,
+          "",
+          `BMR: ${result.bmr} kcal`,
+          `TDEE: ${result.tdee} kcal`,
+          `Calorie Target: ${result.calories} kcal`,
+          `Protein: ${result.protein} g`,
+          `Fats: ${result.fat} g`,
+          `Carbs: ${result.carbs} g`,
+        ].join("\\n");
+        try {
+          await navigator.clipboard.writeText(lines);
+          alert("Summary copied to clipboard!");
+        } catch (err) {
+          alert("Couldn't copy automatically. Select and copy manually.");
+        }
+      };
+
+      const downloadCSV = () => {
+        if (!result) return;
+        const rows = [
+          ["Field", "Value"],
+          ["Gender", inputs.gender],
+          ["Age (years)", inputs.age],
+          ["Height (cm)", inputs.height],
+          ["Weight (kg)", inputs.weight],
+          ["Activity", inputs.activity],
+          ["Goal", inputs.goal],
+          ["BMR (kcal)", result.bmr],
+          ["TDEE (kcal)", result.tdee],
+          ["Calorie Target (kcal)", result.calories],
+          ["Protein (g)", result.protein],
+          ["Fats (g)", result.fat],
+          ["Carbs (g)", result.carbs],
+        ];
+        const blob = new Blob([asCSV(rows)], { type: "text/csv;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "nutrition_results.csv";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+      };
+
+      const permalink = () => {
+        // Update with current inputs and result; then show URL
+        const obj = { ...inputs };
+        const params = new URLSearchParams(obj).toString();
+        const url = window.location.origin + window.location.pathname + "?" + params;
+        navigator.clipboard.writeText(url).then(
+          () => alert("Permalink copied to clipboard!"),
+          () => alert("Permalink: " + url)
+        );
+      };
+
+      return (
+        <div className="space-y-6">
+          <header className="text-center space-y-2">
+            <h1 className="text-3xl md:text-4xl font-bold">Nutrition & Muscle Goal Calculator</h1>
+            <p className="text-gray-600">Figure out daily calories & macros to lose fat, maintain, or build muscle — with explanations.</p>
+          </header>
+
+          <form
+            onSubmit={(e) => { e.preventDefault(); calculate(); }}
+            className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-white rounded-2xl shadow p-4 md:p-6"
+          >
+            <div className="flex flex-col gap-1">
+              <label className="font-medium">Gender</label>
+              <select
+                value={inputs.gender}
+                onChange={(e) => setInputs({ ...inputs, gender: e.target.value })}
+                className="border rounded-lg p-2"
+              >
+                <option value="male">Male</option>
+                <option value="female">Female</option>
+              </select>
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label className="font-medium">Age (years)</label>
+              <input
+                type="number"
+                value={inputs.age}
+                onChange={(e) => setInputs({ ...inputs, age: e.target.value })}
+                className="border rounded-lg p-2"
+                min="10" max="100" step="1"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label className="font-medium">Height (cm)</label>
+              <input
+                type="number"
+                value={inputs.height}
+                onChange={(e) => setInputs({ ...inputs, height: e.target.value })}
+                className="border rounded-lg p-2"
+                min="100" max="230" step="0.5"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1">
+              <label className="font-medium">Weight (kg)</label>
+              <input
+                type="number"
+                value={inputs.weight}
+                onChange={(e) => setInputs({ ...inputs, weight: e.target.value })}
+                className="border rounded-lg p-2"
+                min="30" max="250" step="0.1"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1 md:col-span-2">
+              <label className="font-medium">Activity Level</label>
+              <select
+                value={inputs.activity}
+                onChange={(e) => setInputs({ ...inputs, activity: e.target.value })}
+                className="border rounded-lg p-2"
+              >
+                <option value="1.2">Sedentary (little/no exercise)</option>
+                <option value="1.375">Light (1–3 days/week)</option>
+                <option value="1.55">Moderate (3–5 days/week)</option>
+                <option value="1.725">Very Active (6–7 days/week)</option>
+                <option value="1.9">Athlete (2× per day)</option>
+              </select>
+            </div>
+
+            <div className="flex flex-col gap-1 md:col-span-2">
+              <label className="font-medium">Goal</label>
+              <select
+                value={inputs.goal}
+                onChange={(e) => setInputs({ ...inputs, goal: e.target.value })}
+                className="border rounded-lg p-2"
+              >
+                <option value="lose">Lose Weight / Cut</option>
+                <option value="maintain">Maintain</option>
+                <option value="gain">Gain Muscle / Bulk</option>
+              </select>
+            </div>
+
+            <button type="submit" className="col-span-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 rounded-lg mt-2">
+              Calculate
+            </button>
+          </form>
+
+          {result && (
+            <section className="space-y-4">
+              <h2 className="text-2xl font-semibold text-center">Your Daily Targets</h2>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {[
+                  { label: "BMR", value: result.bmr + " kcal", hint: "Energy burned at complete rest." },
+                  { label: "TDEE", value: result.tdee + " kcal", hint: "Maintenance calories (incl. activity)." },
+                  { label: "Target", value: result.calories + " kcal", hint: "Goal-adjusted calories." },
+                  { label: "Protein", value: result.protein + " g", hint: "Supports muscle repair." },
+                  { label: "Fats", value: result.fat + " g", hint: "Hormones & satiety." },
+                  { label: "Carbs", value: result.carbs + " g", hint: "Training fuel after protein/fat." },
+                ].map(({ label, value, hint }) => (
+                  <div key={label} className="bg-white rounded-2xl shadow p-4 text-center">
+                    <p className="text-sm text-gray-500">{label}</p>
+                    <p className="text-2xl font-bold">{value}</p>
+                    <p className="text-xs text-gray-400">{hint}</p>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap gap-2 justify-center">
+                <button onClick={copySummary} className="px-4 py-2 rounded-lg bg-gray-900 text-white">Copy summary</button>
+                <button onClick={downloadCSV} className="px-4 py-2 rounded-lg bg-gray-200">Download CSV</button>
+                <button onClick={permalink} className="px-4 py-2 rounded-lg bg-indigo-100 text-indigo-700">Copy permalink</button>
+              </div>
+
+              <article className="bg-white rounded-2xl shadow p-6 space-y-3">
+                <h3 className="text-xl font-semibold">How to read these numbers</h3>
+                <ul className="list-disc pl-5 space-y-1 text-sm text-gray-700">
+                  <li><strong>BMR</strong>: Energy at rest (Mifflin–St Jeor). As muscle drops or age rises, BMR tends to decrease.</li>
+                  <li><strong>TDEE</strong>: Your maintenance calories after factoring typical activity.</li>
+                  <li><strong>Calorie Target</strong>: We use ~20% deficit for fat loss and ~15% surplus for lean gaining—sane, sustainable starting points.</li>
+                  <li><strong>Macros</strong>: Protein at 1.6–2.0 g/kg to preserve/build muscle; fat at ~0.8 g/kg for hormones/satiety; carbs fill what’s left to fuel training.</li>
+                </ul>
+                <p className="text-xs text-gray-500">
+                  These are estimates. Track weight, measurements, gym performance, and energy for 1–2 weeks and adjust by 5–10% as needed.
+                </p>
+              </article>
+            </section>
+          )}
+
+          <footer className="text-center text-xs text-gray-500 pt-6">
+            <p>Built for quick sharing: bookmark after calculation or use the Permalink button.</p>
+          </footer>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById("app"));
+    root.render(<NutritionCalculator />);
+  </script>
+</body>
+</html>
